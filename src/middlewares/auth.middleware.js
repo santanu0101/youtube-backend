@@ -21,7 +21,7 @@ export const verifyJWT = asyncHandler(async (req, _, next) => {
     }
   
     // >> verify token is correct or not if correct then decode using SECRET key
-    const decodedToken = await jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+    const decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
     // console.log(decodedToken)
 
     // >> decodedToken have id using this id find User and get detail but without password and refresh token

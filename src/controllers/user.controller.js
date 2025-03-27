@@ -1,3 +1,4 @@
+import jwt from "jsonwebtoken";
 import { User } from "../models/user.models.js";
 import { apiError } from "../utils/apiError.js";
 import { apiResponnse } from "../utils/apiResponse.js";
@@ -66,7 +67,10 @@ const registerUser = asyncHandler(async (req, res) => {
   if (existedUser) {
     throw new apiError(409, "User with email or username already exist");
   }
-  // console.log(req.files);
+  // console.log("1",req.files);
+  // console.log("12 ",req.files.avatar[0]);
+  // console.log("123 ",req.files.avatar[1]);
+  // console.log("1234 ",req.files.avatar[0].path);
 
   // >> then user given file are exit or not if exist then avatar first value path give
   const avatarLocalPath = req.files?.avatar[0]?.path;
@@ -176,7 +180,6 @@ const loginUser = asyncHandler(async (req, res) => {
   const options = {
     httpOnly: true,
     secure: true,
-    
   };
 
   return res
@@ -194,16 +197,16 @@ const loginUser = asyncHandler(async (req, res) => {
 
 const logoutUser = asyncHandler(async (req, res) => {
   // req.user._id
-  // so i have user details from req.user and req.user under we have id (req.user._id)
+  //>> so i have user details from req.user and req.user under we have id (req.user._id)
 
-  // using req.user._id we find and update database refreshToken 
+  //>> using req.user._id we find and update database refreshToken
   await User.findByIdAndUpdate(
     req.user._id,
     {
       // $set: { refreshToken: undefined },
       $unset: {
-        refreshToken: 1 // this removes the field from document
-      }
+        refreshToken: 1, // this removes the field from document
+      },
     },
     {
       new: true,
@@ -215,12 +218,177 @@ const logoutUser = asyncHandler(async (req, res) => {
     secure: true,
   };
 
-  return res
-  .status(200)
-  // >> clear cookie 
-  .clearCookie("accessToken", options)
-  .clearCookie("refreshToken",options)
-  .json(new apiResponnse(200, {}, "User logged Out"))
+  return (
+    res
+      .status(200)
+      // >> clear cookie
+      .clearCookie("accessToken", options)
+      .clearCookie("refreshToken", options)
+      .json(new apiResponnse(200, {}, "User logged Out"))
+  );
 });
 
-export { registerUser, loginUser, logoutUser };
+const refreshAccessToken = asyncHandler(async (req, res) => {
+  // >> get refresh token from cookie or body
+  const incomingRefreshToken =
+    req.cookies.refreshToken || req.body.refreshToken;
+
+  if (!incomingRefreshToken) {
+    throw new apiError(401, "unauthorized request");
+  }
+
+  try {
+    // >> verify token and decoded
+    const decodedToken = jwt.verify(
+      incomingRefreshToken,
+      process.env.REFRESH_TOKEN_SECRET
+    );
+
+    // >> decoded token under have id so user find by id
+    const user = await User.findById(decodedToken?._id);
+
+    if (!user) {
+      throw new apiError(401, "Invalid refresh token");
+    }
+
+    // >> we have two refresh token one get from client side another one get from database if not equal then error
+    if (incomingRefreshToken !== user?.refreshToken) {
+      throw new apiError(401, "Refresh token is expired or used");
+    }
+
+    // >> options is use for jwt store securely in cookie
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
+
+    // create new accesstoken and refreshtoken
+    const { accessToken, newRefreshToken } =
+      await generateAccessAndRefreshToken(user._id);
+
+    return res
+      .status(200)
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", newRefreshToken, options)
+      .json(
+        new apiResponnse(
+          200,
+          { accessToken, refreshToken: newRefreshToken },
+          "Access token refreshed"
+        )
+      );
+  } catch (error) {
+    throw new apiError(401, error?.message || "Invalid refresh token");
+  }
+});
+
+const changeCurrentPassword = asyncHandler(async (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+
+  const user = await User.findById(req.user?._id);
+  const isPasswprdCorrect = await user.isPasswordCorrect(oldPassword);
+
+  if (!isPasswprdCorrect) {
+    throw new apiError(400, "Invalid old password");
+  }
+
+  user.password = newPassword;
+  await user.save({ validateBeforeSave: false });
+
+  return res
+    .status(200)
+    .json(new apiResponnse(200, {}, "Password changed Successfully"));
+});
+
+const getCurrentUser = asyncHandler(async (req, res) => {
+  return res
+    .status(200)
+    .json(new apiResponnse(200, req.user, "current user fetched successfully"));
+});
+
+const updateAccountDetails = asyncHandler(async (req, res) => {
+  const { fullname, email } = req.body;
+
+  if (!fullname || !email) {
+    throw new apiError(400, "All fields are required");
+  }
+
+  const user =  await User.findByIdAndUpdate(
+    req.user?._id,
+    { fullname: fullname, email: email },
+
+    { new: true }
+  ).select("-password");
+
+  return res
+    .status(200)
+    .json(new apiResponnse(200, user, "Account details update successfully"));
+});
+
+const updateUserAvatar = asyncHandler(async (req, res) => {
+  const avatarLocalPath = req.file?.path;
+
+  if (!avatarLocalPath) {
+    throw new apiError(400, "Avatar file is missing");
+  }
+
+  const avatar = await uploadOnCloudinary(avatarLocalPath);
+
+  if (!avatar) {
+    throw new apiError(400, "Error while uploading on avatar");
+  }
+
+  const user = await User.findByIdAndUpdate(
+    req.user?._id,
+    {
+      $set: {
+        avatar: avatar.url,
+      },
+    },
+    { new: true }
+  ).select("-password");
+
+  return res
+    .status(200)
+    .json(new apiResponnse(200, user, "Avatar image upload successfully"));
+});
+
+const updateUserCoverImage = asyncHandler(async (req, res) => {
+  const coverImageLocalPath = req.file?.path;
+
+  if (!coverImageLocalPath) {
+    throw new apiError(400, "cover Image file is missing");
+  }
+
+  const coverImage = await uploadOnCloudinary(coverImageLocalPath);
+
+  if (!coverImage) {
+    throw new apiError(400, "Error while uploading on cover image");
+  }
+
+  const user = await User.findByIdAndUpdate(
+    req.user?._id,
+    {
+      $set: {
+        coverImage: coverImage.url,
+      },
+    },
+    { new: true }
+  ).select("-password");
+
+  return res
+    .status(200)
+    .json(new apiResponnse(200, user, "Cover image upload successfully"));
+});
+
+export {
+  registerUser,
+  loginUser,
+  logoutUser,
+  refreshAccessToken,
+  changeCurrentPassword,
+  getCurrentUser,
+  updateAccountDetails,
+  updateUserAvatar,
+  updateUserCoverImage
+};
