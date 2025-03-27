@@ -85,9 +85,9 @@ npm start  # Start the backend server
 ## Contributing 💡
 Contributions are welcome! Feel free to fork the repository, make improvements, and submit a pull request.
 
----
+<!-- ---
 ## License 📜
-This project is licensed under the **MIT License**.
+This project is licensed under the **MIT License**. -->
 
 ---
 ## Contact 📬
